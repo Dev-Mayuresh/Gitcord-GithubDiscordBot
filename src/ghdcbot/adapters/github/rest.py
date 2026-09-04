@@ -818,7 +818,7 @@ class GitHubRestAdapter:
         if status == 200 and not repos:
             self._logger.info("Organization has no repositories yet", extra={"org": self._org})
         user_fallback = _load_user_fallback()
-        if user_fallback and status in {401, 403}:
+        if user_fallback and status in {401, 403, 404}:
             self._logger.info("Falling back to user repositories (not an org member)")
             repos, _ = self._list_repos_from_path("/user/repos")
         self._last_repo_count = len(repos)
