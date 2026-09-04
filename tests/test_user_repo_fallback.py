@@ -8,7 +8,6 @@ from ghdcbot.config.models import (
     DiscordConfig,
     GitHubConfig,
     RepoFilterConfig,
-    RoleMappingConfig,
     RuntimeConfig,
 )
 
@@ -59,3 +58,53 @@ def test_user_repo_fallback_on_org_unauthorized(monkeypatch, caplog) -> None:
         "Falling back to user repositories (not an org member)" in record.message
         for record in caplog.records
     )
+
+
+def test_user_repo_fallback_on_org_not_found_404(monkeypatch, caplog) -> None:
+    """Ensure personal user accounts returning 404 on /orgs/{user}/repos fall back to /user/repos."""
+    config = BotConfig(
+        runtime=RuntimeConfig(
+            mode="dry-run",
+            log_level="INFO",
+            data_dir="/tmp",
+            github_adapter="ghdcbot.adapters.github.rest:GitHubRestAdapter",
+            discord_adapter="ghdcbot.adapters.discord.api:DiscordApiAdapter",
+            storage_adapter="ghdcbot.adapters.storage.sqlite:SqliteStorage",
+        ),
+        github=GitHubConfig(
+            org="personal-user",
+            token="token",
+            api_base="https://api.github.com",
+            repos=RepoFilterConfig(mode="allow", names=["my-repo"]),
+            user_fallback=True,
+        ),
+        discord=DiscordConfig(guild_id="1", token="t"),
+        assignments=AssignmentConfig(),
+        identity_mappings=[],
+    )
+    monkeypatch.setattr(loader, "_ACTIVE_CONFIG", config)
+    adapter = GitHubRestAdapter(token="t", org="personal-user", api_base="https://api.github.com")
+    calls: list[str] = []
+
+    def fake_list_repos_from_path(path: str):
+        calls.append(path)
+        if path == "/orgs/personal-user/repos":
+            return [], 404
+        if path == "/user/repos":
+            return [
+                {"name": "my-repo", "owner": {"login": "personal-user"}, "full_name": "personal-user/my-repo"}
+            ], 200
+        return [], 200
+
+    monkeypatch.setattr(adapter, "_list_repos_from_path", fake_list_repos_from_path)
+
+    caplog.set_level(logging.INFO)
+    repos = adapter._list_repos()
+
+    assert calls == ["/orgs/personal-user/repos", "/user/repos"]
+    assert [repo["name"] for repo in repos] == ["my-repo"]
+    assert any(
+        "Falling back to user repositories (not an org member)" in record.message
+        for record in caplog.records
+    )
+
